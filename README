@@ -1,0 +1,10 @@
+1ere étape
+	mongoDB :
+	Lancer -> "sudo service mongod start"
+	Arreter -> "sudo service mongod stop"
+2eme etape
+	env:
+	Lancer -> "source venv/bin/activate"
+3eme etape
+	python:
+	Lancer -> "python server.py"
