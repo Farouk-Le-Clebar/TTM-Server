@@ -116,11 +116,7 @@ async def function_player_position(data, websocket):
             players_collection.update_one({'uid': uid}, {'$set': {'posX': posX, 'posY': posY, 'posZ': posZ, 'rotY': rotY}})
             message = json.dumps({'CMD': 'PP', 'uid': player['uid'], 'posX': player['posX'], 'posY': player['posY'], 'posZ': player['posZ'], 'rotY': player['rotY']})
             for ws in connected_clients:
-                print(client_states[ws]['isLogin'])
-                print(ws)
-                print(websocket)
                 if ws != websocket and client_states[ws]['isLogin'] == True:
-                    print("Sending message")
                     await ws.send(message)
             return True
     return False
@@ -144,7 +140,7 @@ async def function_hit_player(data, websocket):
     uid = data.get('uid')
     if uid:
         player = players_collection.find_one({'uid': uid})
-        damage = data.get('damage')
+        damage = int(data.get('damage'))
         if player:
             player['life'] -= damage
             players_collection.update_one({'uid': uid}, {'$set': {'life': player['life']}})
