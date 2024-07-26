@@ -49,8 +49,8 @@ async def function_authentication(data_json, websocket):
                 'rotY': 0.0,
                 'pocket': [["", 0, ""] for _ in range(5)],
                 'weapon': [["", 0, ""] for _ in range(1)],
-                'helmet': [["", 0, ""] for _ in range(1)],
-                'armor': [["", 0, ""] for _ in range(1)],
+                'helmet': [["", 0, "", 0] for _ in range(1)],
+                'armor': [["", 0, "", 0] for _ in range(1)],
                 'eyes': [["", 0, ""] for _ in range(1)],
                 'ears': [["", 0, ""] for _ in range(1)]
             }
@@ -141,8 +141,16 @@ async def function_hit_player(data, websocket):
     if uid:
         player = players_collection.find_one({'uid': uid})
         damage = int(data.get('damage'))
+        resistance = player['armor'][0][3] + player['helmet'][0][3]
+        damage = damage - resistance
+        print(f"Damage: {damage}")
+        print(f"Resistance: {resistance}")
+        if damage < 0:
+            damage = 10
         if player:
             player['life'] -= damage
+            if player['life'] < 0:
+                player['life'] = 0
             players_collection.update_one({'uid': uid}, {'$set': {'life': player['life']}})
             message = json.dumps({'CMD': 'HIT', 'life': player['life']})
             target_websocket = None
@@ -151,18 +159,8 @@ async def function_hit_player(data, websocket):
                     target_websocket = ws
                     break
             await target_websocket.send(message)
-            if player['life'] <= 0:
-                await respawn_player(player, target_websocket)
             return True
-
-async def respawn_player(player, target_websocket):
-    players_collection.update_many({'uid': player['uid']}, {'$set': {'life': 100, 'posX': 0.0, 'posY': 0.1, 'posZ': 0.0}})
-    message = json.dumps({'CMD': 'PP', 'uid': player['uid'], 'posX': 0.0, 'posY': 0.1, 'posZ': 0.0, 'rotY': player['rotY']})
-    for ws in connected_clients:
-        if client_states[ws]['isLogin'] == True:
-            await ws.send(message)
-    message = json.dumps({'CMD': 'GP', 'posX': 0.0, 'posY': 0.1, 'posZ': 0.0, 'rotY': player['rotY']})
-    await target_websocket.send(message)
+    return False
 
 async def function_get_inventory(data, websocket):
     uid = data.get('uid')
@@ -194,34 +192,59 @@ async def function_drop_item_inventory(data, websocket):
     uid = data.get('uid')
     inventory_type = data.get('inventory')
     index = int(data.get('index'))
+    try:
+        resistance = int(data.get('resistance'))
+    except (TypeError, ValueError):
+        resistance = None
     quantity = int(data.get('quantity'))  # Convert quantity to int
     id_item = data.get('id')
     type_item = data.get('type')
 
 
-    print(uid)
     player = players_collection.find_one({'uid': uid})
     if player:
         inventory = player.get(inventory_type)
 
-
-        print(inventory)
-        print(index)
         if inventory:
             current_item = inventory[index]
-            # Ensure arithmetic operations are performed with integers
             if current_item[0] is None or current_item[0] == id_item:
                 new_quantity = min(64, current_item[1] + quantity) if current_item[0] == id_item else quantity
-                inventory[index] = [id_item, new_quantity, type_item]
+                if resistance != None:
+                    inventory[index] = [id_item, new_quantity, type_item, resistance]
+                else:
+                    inventory[index] = [id_item, new_quantity, type_item]
             else:
-                inventory[index] = [id_item, quantity, type_item]
+                if resistance != None:
+                    inventory[index] = [id_item, quantity, type_item, resistance]
+                else:
+                    inventory[index] = [id_item, quantity, type_item]
+
             players_collection.update_one({'uid': uid}, {'$set': {inventory_type: inventory}})
-            print("player inventory updated")
-            print(player)
             return True
         else:
             print("player inventory not updated")
     print("player not found")
+    return False
+
+async def function_respawn_player(data, websocket):
+    uid = data.get('uid')
+    if uid:
+        player = players_collection.find_one({'uid': uid})
+        if player:
+            #update life to 100 and position to x 0 y 0 z 0
+            players_collection.update_many({'uid': uid}, {'$set': {'life': 100, 'posX': 0.0, 'posY': 0.0, 'posZ': 0.0}})
+            #set all inventory of player to empty
+            players_collection.update_many({'uid': uid}, {'$set': {'pocket': [["", 0, ""] for _ in range(5)], 'weapon': [["", 0, ""] for _ in range(1)], 'helmet': [["", 0, ""] for _ in range(1)], 'armor': [["", 0, ""] for _ in range(1)], 'eyes': [["", 0, ""] for _ in range(1)], 'ears': [["", 0, ""] for _ in range(1)]}})
+            player = players_collection.find_one({'uid': uid})
+            message = json.dumps({'CMD': 'PP', 'uid': player['uid'], 'posX': player['posX'], 'posY': player['posY'], 'posZ': player['posZ'], 'rotY': player['rotY']})
+            for ws in connected_clients:
+                if ws != websocket and client_states[ws]['isLogin'] == True:
+                    await ws.send(message)
+            message = json.dumps({'CMD': 'GI', 'pocket': player['pocket'], 'weapon': player['weapon'], 'helmet': player['helmet'], 'armor': player['armor'], 'eyes': player['eyes'], 'ears': player['ears']})
+            await websocket.send(message)
+            message = json.dumps({'CMD': 'RESPAWN', 'life': player['life'], 'posX': player['posX'], 'posY': player['posY'], 'posZ': player['posZ']})
+            await websocket.send(message)
+            return True
     return False
 
 async def function_handler(data, websocket):
@@ -258,6 +281,9 @@ async def function_handler(data, websocket):
             return 0
     if cmd == 'DROPITEM':
         if await function_drop_item_inventory(data_json, websocket) == True:
+            return 0
+    if cmd == 'RESPAWN':
+        if await function_respawn_player(data_json, websocket) == True:
             return 0 
 
 async def handler(websocket, path):
