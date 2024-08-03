@@ -47,8 +47,8 @@ async def function_authentication(data_json, websocket):
                 'posY': 0.0,
                 'posZ': 0.0,
                 'rotY': 0.0,
-                'pocket': [["", 0, ""] for _ in range(5)],
-                'weapon': [["", 0, ""] for _ in range(1)],
+                'pocket': [["", 0, "", [], False] for _ in range(5)],
+                'weapon': [["", 0, "", [], False] for _ in range(1)],
                 'helmet': [["", 0, "", 0] for _ in range(1)],
                 'armor': [["", 0, "", 0] for _ in range(1)],
                 'eyes': [["", 0, ""] for _ in range(1)],
@@ -208,19 +208,41 @@ async def function_drop_item_inventory(data, websocket):
         if inventory:
             current_item = inventory[index]
             if current_item[0] is None or current_item[0] == id_item:
+                print("test")
                 new_quantity = min(64, current_item[1] + quantity) if current_item[0] == id_item else quantity
                 if resistance != None:
                     inventory[index] = [id_item, new_quantity, type_item, resistance]
                 else:
-                    inventory[index] = [id_item, new_quantity, type_item]
+                    if type_item == "weapon":
+                        inventory[index] = [id_item, new_quantity, type_item, ["", "", ""], False]
+                    else:
+                        inventory[index] = [id_item, new_quantity, type_item]
             else:
+                print
                 if resistance != None:
                     inventory[index] = [id_item, quantity, type_item, resistance]
                 else:
-                    inventory[index] = [id_item, quantity, type_item]
+                    if type_item == "weapon":
+                        inventory[index] = [id_item, quantity, type_item, ["", "", ""], False]
+                    else:
+                        inventory[index] = [id_item, quantity, type_item]
 
             players_collection.update_one({'uid': uid}, {'$set': {inventory_type: inventory}})
             return True
+        elif inventory_type == "scope":
+            pocket_inventory = player.get('pocket')
+            if pocket_inventory:
+                for i, item in enumerate(pocket_inventory):
+                    if len(item) > 4 and item[4] is True:
+                        # Trouvé l'élément avec True à l'index 4
+                        if len(item) > 3 and isinstance(item[3], list):
+                            item[3].insert(0, id_item)
+                        else:
+                            item[3] = [id_item]
+                        # Met à jour l'inventaire du joueur dans la base de données
+                        players_collection.update_one({'uid': uid}, {'$set': {f'pocket.{i}': item}})
+                        return True
+            print("Aucun élément avec True à l'index 4 trouvé dans l'inventaire 'pocket'")
         else:
             print("player inventory not updated")
     print("player not found")
@@ -231,9 +253,7 @@ async def function_respawn_player(data, websocket):
     if uid:
         player = players_collection.find_one({'uid': uid})
         if player:
-            #update life to 100 and position to x 0 y 0 z 0
             players_collection.update_many({'uid': uid}, {'$set': {'life': 100, 'posX': 0.0, 'posY': 0.0, 'posZ': 0.0}})
-            #set all inventory of player to empty
             players_collection.update_many({'uid': uid}, {'$set': {'pocket': [["", 0, ""] for _ in range(5)], 'weapon': [["", 0, ""] for _ in range(1)], 'helmet': [["", 0, ""] for _ in range(1)], 'armor': [["", 0, ""] for _ in range(1)], 'eyes': [["", 0, ""] for _ in range(1)], 'ears': [["", 0, ""] for _ in range(1)]}})
             player = players_collection.find_one({'uid': uid})
             message = json.dumps({'CMD': 'PP', 'uid': player['uid'], 'posX': player['posX'], 'posY': player['posY'], 'posZ': player['posZ'], 'rotY': player['rotY']})
@@ -245,6 +265,30 @@ async def function_respawn_player(data, websocket):
             message = json.dumps({'CMD': 'RESPAWN', 'life': player['life'], 'posX': player['posX'], 'posY': player['posY'], 'posZ': player['posZ']})
             await websocket.send(message)
             return True
+    return False
+
+async def function_use_weapon_player(data, websocket):
+    uid = data.get('uid')
+    inventory_type = data.get('inventory')
+    index = int(data.get('index'))
+
+    player = players_collection.find_one({'uid': uid})
+    if player:
+        inventory = player.get(inventory_type)
+        if inventory:
+            weapon = inventory[index]
+            if len(weapon) > 4 and isinstance(weapon[4], bool):
+                weapon[4] = not weapon[4]
+                players_collection.update_one({'uid': uid}, {'$set': {f'{inventory_type}.{index}': weapon}})
+                message = json.dumps({'CMD': 'USEWEAPON', 'index': index, 'inventory': inventory_type, 'attachement1': weapon[3][0], 'attachement2': weapon[3][1], 'attachement3': weapon[3][2]})
+                await websocket.send(message)
+                return True
+            else:
+                print("L'élément de l'inventaire n'a pas de valeur booléenne à l'index 4")
+        else:
+            print("Inventaire du joueur non trouvé")
+    else:
+        print("Joueur non trouvé")
     return False
 
 async def function_handler(data, websocket):
@@ -284,6 +328,9 @@ async def function_handler(data, websocket):
             return 0
     if cmd == 'RESPAWN':
         if await function_respawn_player(data_json, websocket) == True:
+            return 0
+    if cmd == 'USEWEAPON':
+        if await function_use_weapon_player(data_json, websocket) == True:
             return 0 
 
 async def handler(websocket, path):
